@@ -113,7 +113,6 @@ void build_symbol_table(Node *node);
 const char *infer_type(Node *node);
 void sem_report(int line, const char *msg);
 void semantic_analyze(Node *node);
-void run_semantic_demo(void);
 
 /* Forward declarations */
 void build_grammar(void);
@@ -190,15 +189,15 @@ void build_grammar(void) {
   ADD_PROD(8, "stmt", "print_stmt");
   ADD_PROD(9, "stmt", "block");
   ADD_PROD(10, "decl_stmt", "TYPE", "ID", "decl_prime");
-  ADD_PROD(11, "decl_prime", "ASSIGNMENT", "arith_expr", "SEMI");
+  ADD_PROD(11, "decl_prime", "ASSIGNMENT", "bool_expr", "SEMI");
   ADD_PROD(12, "decl_prime", "SEMI");
-  ADD_PROD(13, "assign_stmt", "ID", "ASSIGNMENT", "arith_expr", "SEMI");
+  ADD_PROD(13, "assign_stmt", "ID", "ASSIGNMENT", "bool_expr", "SEMI");
   ADD_PROD(14, "if_stmt", "IF", "LPAREN", "bool_expr", "RPAREN", "block",
            "else_prime");
   ADD_PROD(15, "else_prime", "ELSE", "block");
   ADD_PROD(16, "else_prime", "\xce\xb5");
   ADD_PROD(17, "while_stmt", "WHILE", "LPAREN", "bool_expr", "RPAREN", "block");
-  ADD_PROD(18, "print_stmt", "PRINT", "LPAREN", "arith_expr", "RPAREN", "SEMI");
+  ADD_PROD(18, "print_stmt", "PRINT", "LPAREN", "bool_expr", "RPAREN", "SEMI");
   ADD_PROD(19, "block", "LBRACE", "stmt_list", "RBRACE");
   ADD_PROD(20, "arith_expr", "term", "arith_expr_tail");
   ADD_PROD(21, "arith_expr_tail", "PLUS", "term", "arith_expr_tail");
@@ -209,10 +208,11 @@ void build_grammar(void) {
   ADD_PROD(26, "term_tail", "DIV", "factor", "term_tail");
   ADD_PROD(27, "term_tail", "MOD", "factor", "term_tail");
   ADD_PROD(28, "term_tail", "\xce\xb5");
-  ADD_PROD(29, "factor", "LPAREN", "arith_expr", "RPAREN");
+  ADD_PROD(29, "factor", "LPAREN", "bool_expr", "RPAREN");
   ADD_PROD(30, "factor", "ID");
   ADD_PROD(31, "factor", "INTEGER");
   ADD_PROD(32, "factor", "FLOAT");
+  ADD_PROD(43, "factor", "BOOLEAN");
   ADD_PROD(33, "bool_expr", "bool_term", "bool_expr_tail");
   ADD_PROD(34, "bool_expr_tail", "LOGICAL_OR", "bool_term", "bool_expr_tail");
   ADD_PROD(35, "bool_expr_tail", "\xce\xb5");
@@ -220,10 +220,11 @@ void build_grammar(void) {
   ADD_PROD(37, "bool_term_tail", "LOGICAL_AND", "bool_factor",
            "bool_term_tail");
   ADD_PROD(38, "bool_term_tail", "\xce\xb5");
-  ADD_PROD(39, "bool_factor", "arith_expr", "rel_op", "arith_expr");
-  ADD_PROD(40, "bool_factor", "LPAREN", "bool_expr", "RPAREN");
-  ADD_PROD(41, "bool_factor", "NOT", "bool_factor");
-  ADD_PROD(42, "rel_op", "REL_OP");
+  ADD_PROD(39, "bool_factor", "arith_expr", "rel_op_opt");
+  ADD_PROD(40, "bool_factor", "NOT", "bool_factor");
+  ADD_PROD(41, "rel_op_opt", "rel_op", "arith_expr");
+  ADD_PROD(42, "rel_op_opt", "\xce\xb5");
+  ADD_PROD(44, "rel_op", "REL_OP");
 #undef ADD_PROD
 }
 
@@ -233,7 +234,7 @@ const char *TERM_LIST[] = {
     "LPAREN", "RPAREN",  "ELSE",       "WHILE",       "PRINT",
     "LBRACE", "RBRACE",  "LOGICAL_OR", "LOGICAL_AND", "NOT",
     "REL_OP", "PLUS",    "MINUS",      "MULT",        "DIV",
-    "MOD",    "INTEGER", "FLOAT",      "$",           NULL};
+    "MOD",    "INTEGER", "FLOAT",      "BOOLEAN",     "$",           NULL};
 
 int is_terminal(const char *s) {
   if (strcmp(s, "\xce\xb5") == 0)
@@ -439,7 +440,7 @@ const char *token_to_terminal(Token *t) {
   if (!t)
     return "$";
   if (strcmp(t->type, "KEYWORD") == 0) {
-    if (strcmp(t->value, "int") == 0 || strcmp(t->value, "float") == 0)
+    if (strcmp(t->value, "int") == 0 || strcmp(t->value, "float") == 0 || strcmp(t->value, "bool") == 0)
       return "TYPE";
     if (strcmp(t->value, "if") == 0)
       return "IF";
@@ -449,6 +450,8 @@ const char *token_to_terminal(Token *t) {
       return "WHILE";
     if (strcmp(t->value, "print") == 0)
       return "PRINT";
+    if (strcmp(t->value, "true") == 0 || strcmp(t->value, "false") == 0)
+      return "BOOLEAN";
   }
   if (strcmp(t->type, "IDENTIFIER") == 0)
     return "ID";
@@ -777,14 +780,14 @@ static int sr_try_reduce(const char *la, char *desc) {
 
   /* ===== A. DECLARATION STATEMENT ===== */
   if (sr_top >= 4 && sr_check(4, "TYPE") && sr_check(3, "ID") &&
-      sr_check(2, "ASSIGNMENT") && sr_check(1, "arith_expr") &&
+      sr_check(2, "ASSIGNMENT") && sr_check(1, "bool_expr") &&
       sr_check(0, "SEMI")) {
     int ln = sr_stack[sr_top - 2].line;
     sr_pop();
     sr_pop();
     sr_pop();
     sr_push("decl_prime", ln);
-    sprintf(desc, "[11] decl_prime -> = arith_expr ;");
+    sprintf(desc, "[11] decl_prime -> = bool_expr ;");
     return 1;
   }
   if (sr_top >= 2 && sr_check(2, "TYPE") && sr_check(1, "ID") &&
@@ -815,7 +818,7 @@ static int sr_try_reduce(const char *la, char *desc) {
 
   /* ===== B. ASSIGNMENT STATEMENT ===== */
   if (sr_top >= 3 && sr_check(3, "ID") && sr_check(2, "ASSIGNMENT") &&
-      sr_check(1, "arith_expr") && sr_check(0, "SEMI")) {
+      sr_check(1, "bool_expr") && sr_check(0, "SEMI")) {
     if (!(sr_top >= 4 && sr_check(4, "TYPE"))) {
       int ln = sr_stack[sr_top - 3].line;
       sr_pop();
@@ -823,7 +826,7 @@ static int sr_try_reduce(const char *la, char *desc) {
       sr_pop();
       sr_pop();
       sr_push("assign_stmt", ln);
-      sprintf(desc, "[13] assign_stmt -> ID = arith_expr ;");
+      sprintf(desc, "[13] assign_stmt -> ID = bool_expr ;");
       return 1;
     }
   }
@@ -861,9 +864,16 @@ static int sr_try_reduce(const char *la, char *desc) {
     sprintf(desc, "[32] factor -> FLOAT");
     return 1;
   }
+  if (sr_check(0, "BOOLEAN")) {
+    int ln = sr_stack[sr_top].line;
+    sr_pop();
+    sr_push("factor", ln);
+    sprintf(desc, "[43] factor -> BOOLEAN");
+    return 1;
+  }
 
-  /* ===== D. factor -> ( arith_expr ) ===== */
-  if (sr_top >= 2 && sr_check(2, "LPAREN") && sr_check(1, "arith_expr") &&
+  /* ===== D. factor -> ( bool_expr ) ===== */
+  if (sr_top >= 2 && sr_check(2, "LPAREN") && sr_check(1, "bool_expr") &&
       sr_check(0, "RPAREN")) {
     int is_ctrl = 0;
     if (sr_top >= 3) {
@@ -876,7 +886,7 @@ static int sr_try_reduce(const char *la, char *desc) {
       sr_pop();
       sr_pop();
       sr_push("factor", ln);
-      sprintf(desc, "[29] factor -> ( arith_expr )");
+      sprintf(desc, "[29] factor -> ( bool_expr )");
       return 1;
     }
   }
@@ -977,17 +987,31 @@ static int sr_try_reduce(const char *la, char *desc) {
     int ln = sr_stack[sr_top].line;
     sr_pop();
     sr_push("rel_op", ln);
-    sprintf(desc, "[42] rel_op -> REL_OP");
+    sprintf(desc, "[44] rel_op -> REL_OP");
     return 1;
   }
-  if (sr_top >= 2 && sr_check(2, "arith_expr") && sr_check(1, "rel_op") &&
-      sr_check(0, "arith_expr")) {
-    int ln = sr_stack[sr_top - 2].line;
+  if (sr_top >= 1 && sr_check(1, "rel_op") && sr_check(0, "arith_expr")) {
+    int ln = sr_stack[sr_top - 1].line;
     sr_pop();
+    sr_pop();
+    sr_push("rel_op_opt", ln);
+    sprintf(desc, "[41] rel_op_opt -> rel_op arith_expr");
+    return 1;
+  }
+  if (sr_check(0, "arith_expr")) {
+    if (strcmp(la, "REL_OP") != 0 && strcmp(la, "PLUS") != 0 && strcmp(la, "MINUS") != 0 && strcmp(la, "MULT") != 0 && strcmp(la, "DIV") != 0 && strcmp(la, "MOD") != 0) {
+        int ln = sr_stack[sr_top].line;
+        sr_push("rel_op_opt", ln);
+        sprintf(desc, "[42] rel_op_opt -> eps");
+        return 1;
+    }
+  }
+  if (sr_top >= 1 && sr_check(1, "arith_expr") && sr_check(0, "rel_op_opt")) {
+    int ln = sr_stack[sr_top - 1].line;
     sr_pop();
     sr_pop();
     sr_push("bool_factor", ln);
-    sprintf(desc, "[39] bool_factor -> arith_expr rel_op arith_expr");
+    sprintf(desc, "[39] bool_factor -> arith_expr rel_op_opt");
     return 1;
   }
   if (sr_top >= 1 && sr_check(1, "NOT") && sr_check(0, "bool_factor")) {
@@ -995,23 +1019,8 @@ static int sr_try_reduce(const char *la, char *desc) {
     sr_pop();
     sr_pop();
     sr_push("bool_factor", ln);
-    sprintf(desc, "[41] bool_factor -> NOT bool_factor");
+    sprintf(desc, "[40] bool_factor -> NOT bool_factor");
     return 1;
-  }
-  if (sr_top >= 2 && sr_check(2, "LPAREN") && sr_check(1, "bool_expr") &&
-      sr_check(0, "RPAREN")) {
-    int is_control = 0;
-    if (sr_top >= 3 && (sr_check(3, "IF") || sr_check(3, "WHILE")))
-      is_control = 1;
-    if (!is_control) {
-      int ln = sr_stack[sr_top - 2].line;
-      sr_pop();
-      sr_pop();
-      sr_pop();
-      sr_push("bool_factor", ln);
-      sprintf(desc, "[40] bool_factor -> ( bool_expr )");
-      return 1;
-    }
   }
   if (sr_check(0, "bool_factor")) {
     if (strcmp(la, "LOGICAL_AND") != 0) {
@@ -1070,7 +1079,7 @@ static int sr_try_reduce(const char *la, char *desc) {
 
   /* ===== J. PRINT STATEMENT ===== */
   if (sr_top >= 4 && sr_check(4, "PRINT") && sr_check(3, "LPAREN") &&
-      sr_check(2, "arith_expr") && sr_check(1, "RPAREN") &&
+      sr_check(2, "bool_expr") && sr_check(1, "RPAREN") &&
       sr_check(0, "SEMI")) {
     int ln = sr_stack[sr_top - 4].line;
     sr_pop();
@@ -1079,7 +1088,7 @@ static int sr_try_reduce(const char *la, char *desc) {
     sr_pop();
     sr_pop();
     sr_push("print_stmt", ln);
-    sprintf(desc, "[18] print_stmt -> print ( arith_expr ) ;");
+    sprintf(desc, "[18] print_stmt -> print ( bool_expr ) ;");
     return 1;
   }
   if (sr_check(0, "print_stmt")) {
@@ -1364,7 +1373,8 @@ void node_to_tokens(Node *node, Token *out, int *out_len) {
     else if (strcmp(node->label, "IF") == 0 ||
              strcmp(node->label, "ELSE") == 0 ||
              strcmp(node->label, "WHILE") == 0 ||
-             strcmp(node->label, "PRINT") == 0)
+             strcmp(node->label, "PRINT") == 0 ||
+             strcmp(node->label, "BOOLEAN") == 0)
       strcpy(t.type, "KEYWORD");
     else if (strcmp(node->label, "ASSIGNMENT") == 0)
       strcpy(t.type, "ASSIGNMENT");
@@ -1451,6 +1461,7 @@ void skip_to_next_statement(void) {
     Token *t = current_tok();
     if (strcmp(t->type, "KEYWORD") == 0) {
       if (strcmp(t->value, "int") == 0 || strcmp(t->value, "float") == 0 ||
+          strcmp(t->value, "bool") == 0 ||
           strcmp(t->value, "if") == 0 || strcmp(t->value, "while") == 0 ||
           strcmp(t->value, "print") == 0)
         return;
@@ -1479,6 +1490,7 @@ void synchronize(void) {
       return;
     if (strcmp(t->type, "KEYWORD") == 0) {
       if (strcmp(t->value, "int") == 0 || strcmp(t->value, "float") == 0 ||
+          strcmp(t->value, "bool") == 0 ||
           strcmp(t->value, "if") == 0 || strcmp(t->value, "while") == 0 ||
           strcmp(t->value, "print") == 0)
         return;
@@ -1507,7 +1519,7 @@ Node *parse_factor(void) {
   Node *node = create_node("factor", NULL, t->line);
   if (strcmp(t->value, "(") == 0) {
     expect_delim("(");
-    Node *expr = parse_expr();
+    Node *expr = parse_bool_expr();
     if (!expr)
       return NULL;
     add_child(node, expr);
@@ -1518,6 +1530,9 @@ Node *parse_factor(void) {
     consume_tok();
   } else if (strcmp(t->type, "FLOAT") == 0) {
     add_child(node, create_node("FLOAT", t->value, t->line));
+    consume_tok();
+  } else if (strcmp(t->type, "KEYWORD") == 0 && (strcmp(t->value, "true") == 0 || strcmp(t->value, "false") == 0)) {
+    add_child(node, create_node("BOOLEAN", t->value, t->line));
     consume_tok();
   } else if (strcmp(t->type, "IDENTIFIER") == 0) {
     add_child(node, create_node("ID", t->value, t->line));
@@ -1644,7 +1659,7 @@ Node *parse_decl_statement(void) {
   if (current_tok() && strcmp(current_tok()->type, "ASSIGNMENT") == 0) {
     t = consume_tok();
     add_child(node, create_node("ASSIGNMENT", t->value, t->line));
-    Node *expr = parse_expr();
+    Node *expr = parse_bool_expr();
     if (expr)
       add_child(node, expr);
   }
@@ -1672,7 +1687,7 @@ Node *parse_assign_statement(void) {
     return node;
   }
   add_child(node, create_node("ASSIGNMENT", at->value, at->line));
-  Node *expr = parse_expr();
+  Node *expr = parse_bool_expr();
   if (expr)
     add_child(node, expr);
   if (!expect_delim(";")) {
@@ -1699,6 +1714,7 @@ Node *parse_error_statement(void) {
     }
     if (strcmp(cur->type, "KEYWORD") == 0) {
       if (strcmp(cur->value, "int") == 0 || strcmp(cur->value, "float") == 0 ||
+          strcmp(cur->value, "bool") == 0 ||
           strcmp(cur->value, "if") == 0 || strcmp(cur->value, "while") == 0 ||
           strcmp(cur->value, "print") == 0) {
         break;
@@ -1718,8 +1734,17 @@ Node *parse_error_statement(void) {
         strcpy(lbl, "INTEGER");
       else if (strcmp(cur->type, "FLOAT") == 0)
         strcpy(lbl, "FLOAT");
-      else if (strcmp(cur->type, "KEYWORD") == 0)
-        strcpy(lbl, "TYPE");
+      else if (strcmp(cur->type, "KEYWORD") == 0) {
+        if (strcmp(cur->value, "int") == 0 || strcmp(cur->value, "float") == 0 || strcmp(cur->value, "bool") == 0)
+          strcpy(lbl, "TYPE");
+        else if (strcmp(cur->value, "true") == 0 || strcmp(cur->value, "false") == 0)
+          strcpy(lbl, "BOOLEAN");
+        else {
+          char up[32] = {0};
+          for (int k=0; cur->value[k] && k<31; k++) up[k] = toupper((unsigned char)cur->value[k]);
+          strcpy(lbl, up);
+        }
+      }
       else if (strcmp(cur->type, "ASSIGNMENT") == 0)
         strcpy(lbl, "ASSIGNMENT");
       else if (strcmp(cur->type, "ARITHMETIC") == 0)
@@ -1820,7 +1845,7 @@ Node *parse_print_statement(void) {
   add_child(node, create_node("PRINT", "print", last_line));
   expect_delim("(");
   add_child(node, create_node("LPAREN", "(", last_line));
-  Node *expr = parse_expr();
+  Node *expr = parse_bool_expr();
   if (expr)
     add_child(node, expr);
   expect_delim(")");
@@ -1852,7 +1877,7 @@ Node *parse_statement(void) {
   if (!t)
     return NULL;
   if (strcmp(t->type, "KEYWORD") == 0) {
-    if (strcmp(t->value, "int") == 0 || strcmp(t->value, "float") == 0)
+    if (strcmp(t->value, "int") == 0 || strcmp(t->value, "float") == 0 || strcmp(t->value, "bool") == 0)
       return parse_decl_statement();
     if (strcmp(t->value, "if") == 0)
       return parse_if_statement();
@@ -2077,9 +2102,10 @@ void rightmost_derivation(Node *root) {
 
 /* ========== LEXICAL ANALYZER ========== */
 static int is_keyword(const char *s) {
-  return strcmp(s, "int") == 0 || strcmp(s, "float") == 0 ||
+  return strcmp(s, "int") == 0 || strcmp(s, "float") == 0 || strcmp(s, "bool") == 0 ||
          strcmp(s, "if") == 0 || strcmp(s, "else") == 0 ||
-         strcmp(s, "while") == 0 || strcmp(s, "print") == 0;
+         strcmp(s, "while") == 0 || strcmp(s, "print") == 0 ||
+         strcmp(s, "true") == 0 || strcmp(s, "false") == 0;
 }
 
 static void add_token(const char *type, const char *value, int line) {
@@ -2476,6 +2502,10 @@ const char *infer_type(Node *node) {
     strcpy(infer_result, "float");
     return infer_result;
   }
+  if (strcmp(node->label, "BOOLEAN") == 0) {
+    strcpy(infer_result, "bool");
+    return infer_result;
+  }
   if (strcmp(node->label, "ID") == 0) {
     Symbol *s = sym_lookup(node->value);
     if (!s) {
@@ -2489,15 +2519,63 @@ const char *infer_type(Node *node) {
     strcpy(infer_result, s->type);
     return infer_result;
   }
-  /* Composite: float propagates upward; default is int */
-  strcpy(infer_result, "int");
+
+  int has_arithmetic = 0;
+  int has_relational = 0;
+  int has_logical = 0;
+  int has_float = 0;
+  int has_bool = 0;
+  int has_unknown = 0;
+  int operand_count = 0;
+  char last_operand_type[16] = "unknown";
+
   for (int i = 0; i < node->child_count; i++) {
-    const char *ct = infer_type(node->children[i]);
-    if (strcmp(ct, "float") == 0)
-      strcpy(infer_result, "float");
-    if (strcmp(ct, "unknown") == 0 && strcmp(infer_result, "float") != 0)
-      strcpy(infer_result, "unknown");
+    Node *c = node->children[i];
+    if (strcmp(c->label, "ARITHMETIC") == 0 || strcmp(c->label, "PLUS") == 0 ||
+        strcmp(c->label, "MINUS") == 0 || strcmp(c->label, "MULT") == 0 ||
+        strcmp(c->label, "DIV") == 0 || strcmp(c->label, "MOD") == 0) {
+      has_arithmetic = 1;
+    } else if (strcmp(c->label, "REL_OP") == 0 || strcmp(c->label, "rel_op") == 0) {
+      has_relational = 1;
+    } else if (strcmp(c->label, "LOGICAL") == 0 || strcmp(c->label, "LOGICAL_AND") == 0 ||
+               strcmp(c->label, "LOGICAL_OR") == 0 || strcmp(c->label, "NOT") == 0) {
+      has_logical = 1;
+    } else if (strcmp(c->label, "LPAREN") == 0 || strcmp(c->label, "RPAREN") == 0) {
+      /* ignore */
+    } else {
+      const char *ct = infer_type(c);
+      operand_count++;
+      strcpy(last_operand_type, ct);
+      if (strcmp(ct, "float") == 0) has_float = 1;
+      if (strcmp(ct, "bool") == 0) has_bool = 1;
+      if (strcmp(ct, "unknown") == 0) has_unknown = 1;
+    }
   }
+
+  if (has_unknown) {
+    strcpy(infer_result, "unknown");
+    return infer_result;
+  }
+  if (has_arithmetic) {
+    if (has_bool) {
+      sem_error("invalid operand type 'bool' for arithmetic operator", node->line);
+      strcpy(infer_result, "unknown");
+      return infer_result;
+    }
+    strcpy(infer_result, has_float ? "float" : "int");
+    return infer_result;
+  }
+  if (has_relational || has_logical) {
+    strcpy(infer_result, "bool");
+    return infer_result;
+  }
+  if (operand_count == 1) {
+    strcpy(infer_result, last_operand_type);
+    return infer_result;
+  }
+  strcpy(infer_result, "int");
+  if (has_float) strcpy(infer_result, "float");
+  else if (has_bool) strcpy(infer_result, "bool");
   return infer_result;
 }
 
@@ -2550,24 +2628,13 @@ void semantic_analyze(Node *node) {
         init_expr = node->children[i + 1];
     }
 
-    /* Duplicate check using sym_lookup_current on the pre-built table */
-    int dup = 0;
-    for (int i = 0; i < sym_count; i++) {
-      if (sym_table[i].scope == scope_depth &&
-          strcmp(sym_table[i].name, var_name) == 0) {
-        /* Count how many times this name appears at this scope */
-        int cnt = 0;
-        for (int j = 0; j < sym_count; j++)
-          if (sym_table[j].scope == scope_depth &&
-              strcmp(sym_table[j].name, var_name) == 0)
-            cnt++;
-        if (cnt > 1) {
-          dup = 1;
-          break;
-        }
-      }
-    }
-    if (dup) {
+    /* Q3 — duplicate declaration check.
+     * build_symbol_table only inserts the FIRST occurrence of each name, so
+     * counting sym_table entries always gives 1 and never triggers. Instead:
+     * look up the name in the current scope — if it already exists at a
+     * different source line, this decl_stmt is a duplicate. */
+    Symbol *existing = sym_lookup_current(var_name);
+    if (existing && existing->line != decl_line) {
       char msg[128];
       snprintf(msg, sizeof(msg), "multiple declaration of '%s' in scope %d",
                var_name, scope_depth);
@@ -2580,14 +2647,22 @@ void semantic_analyze(Node *node) {
     /* Type mismatch in initialiser */
     if (init_expr) {
       const char *rhs = infer_type(init_expr);
-      if (strcmp(rhs, "unknown") != 0 && strcmp(decl_type, "int") == 0 &&
-          strcmp(rhs, "float") == 0) {
-        char msg[128];
-        snprintf(msg, sizeof(msg),
-                 "type mismatch: cannot assign float expression to int "
-                 "variable '%s'",
-                 var_name);
-        sem_error(msg, decl_line);
+      if (strcmp(rhs, "unknown") != 0) {
+        if (strcmp(decl_type, "int") == 0 && strcmp(rhs, "float") == 0) {
+          char msg[128];
+          snprintf(msg, sizeof(msg),
+                   "type mismatch: cannot assign float expression to int "
+                   "variable '%s'",
+                   var_name);
+          sem_error(msg, decl_line);
+        } else if (strcmp(decl_type, "bool") != 0 && strcmp(rhs, "bool") == 0) {
+          char msg[128];
+          snprintf(msg, sizeof(msg),
+                   "type mismatch: cannot assign bool expression to %s "
+                   "variable '%s'",
+                   decl_type, var_name);
+          sem_error(msg, decl_line);
+        }
       }
     }
     return;
@@ -2617,14 +2692,22 @@ void semantic_analyze(Node *node) {
     }
     if (rhs_expr) {
       const char *rhs = infer_type(rhs_expr);
-      if (s && strcmp(rhs, "unknown") != 0 && strcmp(s->type, "int") == 0 &&
-          strcmp(rhs, "float") == 0) {
-        char msg[128];
-        snprintf(msg, sizeof(msg),
-                 "type mismatch: cannot assign float expression to int "
-                 "variable '%s'",
-                 var_name);
-        sem_error(msg, asgn_line);
+      if (s && strcmp(rhs, "unknown") != 0) {
+        if (strcmp(s->type, "int") == 0 && strcmp(rhs, "float") == 0) {
+          char msg[128];
+          snprintf(msg, sizeof(msg),
+                   "type mismatch: cannot assign float expression to int "
+                   "variable '%s'",
+                   var_name);
+          sem_error(msg, asgn_line);
+        } else if (strcmp(s->type, "bool") != 0 && strcmp(rhs, "bool") == 0) {
+          char msg[128];
+          snprintf(msg, sizeof(msg),
+                   "type mismatch: cannot assign bool expression to %s "
+                   "variable '%s'",
+                   s->type, var_name);
+          sem_error(msg, asgn_line);
+        }
       }
       if (s)
         printf("  [ASSIGN] %-12s = %-6s expression  (line %d)\n", var_name, rhs,
@@ -2681,90 +2764,6 @@ void semantic_analyze(Node *node) {
   /* Default: recurse */
   for (int i = 0; i < node->child_count; i++)
     semantic_analyze(node->children[i]);
-}
-
-/* Q3 — run_semantic_demo: demonstrates the two mandatory semantic error cases
- * using modified variants of the ACTUAL input.txt program so the demo is
- * clearly connected to the program being analysed, not a random example. */
-void run_semantic_demo(void) {
-  printf("\n==================================================================="
-         "=============\n");
-  printf("  SEMANTIC ERROR DEMONSTRATION (2 Required Cases)\n");
-  printf("====================================================================="
-         "===========\n\n");
-
-  /* Save live state so we can restore it after the demo */
-  int saved_errors = sem_errors_count;
-  int saved_scope = scope_depth;
-  int saved_count = sym_count;
-
-  /* ------------------------------------------------------------------
-   * Demo Case 1 — Use of undeclared variable
-   *
-   * input.txt declares: int a; int b; int sum; float avg;
-   * Suppose the programmer wrote:  total = a + b;
-   * ('total' was never declared — this mirrors a real mistake in the
-   *  same style of program as input.txt)
-   * ------------------------------------------------------------------ */
-  printf("  Case 1 — Use of undeclared variable\n");
-  printf("  %-14s %s\n", "Program:", "int a; int b; int sum; float avg;");
-  printf("  %-14s %s\n", "", "a = 2; b = 15;");
-  printf("  %-14s %s\n", "", "total = a + b;   <-- 'total' never declared");
-  printf(
-      "  Expected:  [SEMANTIC ERROR] use of undeclared variable 'total'\n\n");
-
-  sem_errors_count = 0;
-  scope_depth = 0;
-  sym_count = 0;
-  memset(scope_offset, 0, sizeof(scope_offset));
-
-  /* Replicate the declarations from input.txt */
-  sym_insert("a", "int", 1);
-  sym_insert("b", "int", 2);
-  sym_insert("sum", "int", 3);
-  sym_insert("avg", "float", 4);
-  /* Simulate: a = 2 and b = 15 — both declared, no error */
-  /* Simulate: total = a + b — 'total' is not declared */
-  if (!sym_lookup("total"))
-    sem_error("use of undeclared variable 'total'", 7);
-
-  printf("  Result: %d semantic error(s) found.\n\n", sem_errors_count);
-
-  /* ------------------------------------------------------------------
-   * Demo Case 2 — Multiple declarations in the same scope
-   *
-   * input.txt declares 'int a' at the top level (scope 0).
-   * Suppose the programmer accidentally wrote 'int a;' a second time.
-   * ------------------------------------------------------------------ */
-  printf("  Case 2 — Multiple declarations in the same scope\n");
-  printf("  %-14s %s\n", "Program:", "int a;");
-  printf("  %-14s %s\n", "", "int b;");
-  printf("  %-14s %s\n", "", "int a;   <-- 'a' already declared in scope 0");
-  printf("  Expected:  [SEMANTIC ERROR] multiple declaration of 'a' in scope "
-         "0\n\n");
-
-  sem_errors_count = 0;
-  scope_depth = 0;
-  sym_count = 0;
-  memset(scope_offset, 0, sizeof(scope_offset));
-
-  sym_insert("a", "int", 1); /* first  int a — OK */
-  sym_insert("b", "int", 2); /* int b  — OK */
-  /* second int a — duplicate in scope 0 */
-  if (sym_lookup_current("a")) {
-    char msg[128];
-    snprintf(msg, sizeof(msg), "multiple declaration of 'a' in scope %d",
-             scope_depth);
-    sem_error(msg, 3);
-  }
-
-  printf("  Result: %d semantic error(s) found.\n\n", sem_errors_count);
-
-  /* Restore live state */
-  sem_errors_count = saved_errors;
-  scope_depth = saved_scope;
-  sym_count = saved_count;
-  memset(scope_offset, 0, sizeof(scope_offset));
 }
 
 /* ========== MAIN ========== */
@@ -2922,7 +2921,7 @@ int main(void) {
          "===========\n\n");
   printf("  [SCOPE] >>> Entering scope level 0  (global)\n");
   build_symbol_table(tree);
-  printf("  [SCOPE]PHASE <<< Leaving  scope level 0  (global)\n");
+  printf("  [SCOPE] <<< Leaving  scope level 0  (global)\n");
   /* Restore depth to 0 so sym_lookup works during semantic analysis */
   scope_depth = 0;
   /* Print the complete flat symbol table */
@@ -2935,7 +2934,7 @@ int main(void) {
 
   printf("====================================================================="
          "===========\n");
-  printf("SEMANTIC ANALYSIS TRACE\n");
+  printf("  SEMANTIC ANALYSIS\n");
   printf("====================================================================="
          "===========\n\n");
 
@@ -2954,9 +2953,6 @@ int main(void) {
 
   /* Reprint the symbol table after analysis (matches phase6.c ending) */
   print_symbol_table();
-
-  /* Show 2 explicit error demos for Q3 marking requirement */
-  run_semantic_demo();
 
   /* ===== STATEMENT SELECTION ===== */
 
