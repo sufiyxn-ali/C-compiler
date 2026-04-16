@@ -2313,10 +2313,6 @@ void sym_scope_exit(void) {
   if (scope_depth > 0)
     scope_depth--;
 }
-
-/* Q2 — sym_insert: add a symbol to the flat table at the current scope depth.
- * Computes offset using 4 bytes per variable (int and float both 4 bytes).
- * Returns a pointer to the new entry, or NULL if the table is full. */
 Symbol *sym_insert(const char *name, const char *type, int line) {
   if (sym_count >= MAX_SYM_TABLE)
     return NULL;
@@ -2333,9 +2329,6 @@ Symbol *sym_insert(const char *name, const char *type, int line) {
   return s;
 }
 
-/* Q2 — sym_lookup: search all scopes from innermost outward.
- * Returns the entry with the highest scope <= scope_depth — identical to
- * the lookup in phase5.c and phase6.c. */
 Symbol *sym_lookup(const char *name) {
   Symbol *best = NULL;
   for (int i = 0; i < sym_count; i++) {
@@ -2348,8 +2341,6 @@ Symbol *sym_lookup(const char *name) {
   return best;
 }
 
-/* Q2 — sym_lookup_current: check only the current (innermost) scope.
- * Used to detect duplicate declarations before inserting. */
 Symbol *sym_lookup_current(const char *name) {
   for (int i = 0; i < sym_count; i++) {
     if (sym_table[i].scope == scope_depth &&
@@ -2359,8 +2350,6 @@ Symbol *sym_lookup_current(const char *name) {
   return NULL;
 }
 
-/* Q2 — print_symbol_table: flat dump of all symbols.
- * Column order matches phase5.c: Name | Type | Scope | Offset | Line. */
 void print_symbol_table(void) {
   printf("\n==================================================================="
          "=============\n");
@@ -2381,20 +2370,9 @@ void print_symbol_table(void) {
          "===========\n\n");
 }
 
-/* Q2 — build_symbol_table: parse-tree walk that populates the symbol table
- * and prints the same trace as phase5.c:
- *   [SCOPE] >>> Entering scope level N
- *   [INSERT] name  type=T  scope=N  offset=O  (line L)
- *   [WARN]   Multiple declaration of 'x' in scope N (line L)
- *   [SCOPE] <<< Leaving  scope level N  (symbols declared here:)
- *              name  type=T  offset=O           -- or (none)
- *
- * Symbols are NOT removed on scope-exit so print_symbol_table() shows all. */
 void build_symbol_table(Node *node) {
   if (!node)
     return;
-
-  /* BLOCK node: increase scope, recurse, print exit summary, lower scope */
   if (strcmp(node->label, "block") == 0) {
     scope_depth++;
     if (scope_depth < MAX_SCOPE_DEPTH)
@@ -2417,11 +2395,10 @@ void build_symbol_table(Node *node) {
     if (!found)
       printf("            (none)\n");
 
-    scope_depth--; /* lower depth; keep symbols for the final table print */
+    scope_depth--;
     return;
   }
 
-  /* DECLARATION node: insert or warn */
   if (strcmp(node->label, "decl_stmt") == 0) {
     const char *var_type = NULL;
     const char *var_name = NULL;
@@ -2459,19 +2436,15 @@ void build_symbol_table(Node *node) {
  */
 /* ========================================================================== */
 
-/* Q3 — sem_errors_count: running count of semantic errors found.
- * Errors are printed inline (immediately) matching phase6.c. */
+
 static int sem_errors_count = 0;
 
-/* Q3 — sem_error: emit one [SEMANTIC ERROR] line to stdout immediately.
- * Mirrors the phase6.c sem_error() function exactly. */
+
 static void sem_error(const char *msg, int line) {
   printf("  [SEMANTIC ERROR] Line %d: %s\n", line, msg);
   sem_errors_count++;
 }
 
-/* Q3 — has_relop: return 1 if the subtree contains at least one REL_OP node.
- * A valid boolean condition for if/while must contain a relational operator. */
 static int has_relop(Node *node) {
   if (!node)
     return 0;
@@ -2483,10 +2456,6 @@ static int has_relop(Node *node) {
   return 0;
 }
 
-/* Q3 — infer_type: return the type string ("int"/"float"/"unknown") for an
- * expression subtree.  Uses global sym_table with the current scope_depth so
- * name-to-type resolution is scope-aware.  Emits a semantic error for any
- * undeclared ID it encounters (matches phase6.c behaviour). */
 static char infer_result[16];
 const char *infer_type(Node *node) {
   if (!node) {
@@ -2579,21 +2548,6 @@ const char *infer_type(Node *node) {
   return infer_result;
 }
 
-/* Q3 — semantic_analyze (sem_walk equivalent, based on phase6.c):
- * Walks the parse tree and prints inline trace tags for each construct,
- * emitting [SEMANTIC ERROR] lines for any violation found.
- *
- * Tag format matches phase6.c exactly:
- *   [SCOPE]  entering/leaving scope level N
- *   [DECL]   name  type=T  scope=N  (line L)
- *   [ASSIGN] name = type expression  (line L)
- *   [IF]     checking condition (line L)
- *   [WHILE]  checking condition (line L)
- *   [PRINT]  (line L)
- *   [SEMANTIC ERROR] Line L: message
- *
- * Relies on the same sym_table built by build_symbol_table(),
- * with scope_depth reset to 0 before this walk begins. */
 void semantic_analyze(Node *node) {
   if (!node)
     return;
@@ -2628,11 +2582,6 @@ void semantic_analyze(Node *node) {
         init_expr = node->children[i + 1];
     }
 
-    /* Q3 — duplicate declaration check.
-     * build_symbol_table only inserts the FIRST occurrence of each name, so
-     * counting sym_table entries always gives 1 and never triggers. Instead:
-     * look up the name in the current scope — if it already exists at a
-     * different source line, this decl_stmt is a duplicate. */
     Symbol *existing = sym_lookup_current(var_name);
     if (existing && existing->line != decl_line) {
       char msg[128];
@@ -2644,7 +2593,6 @@ void semantic_analyze(Node *node) {
              decl_type, scope_depth, decl_line);
     }
 
-    /* Type mismatch in initialiser */
     if (init_expr) {
       const char *rhs = infer_type(init_expr);
       if (strcmp(rhs, "unknown") != 0) {
