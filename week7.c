@@ -1,10 +1,3 @@
-/*
- * ============================================================
- *  UPGRADED SYNTAX ANALYSER - FIXED VERSION
- *  Implements: (1) LL(1) Parser + (2) Shift-Reduce Parser
- * ============================================================
- */
-
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
