@@ -1,0 +1,8 @@
+# Compiled binaries
+*.exe
+*.o
+*.out
+
+# Generated output files
+output.asm
+Phase7_quadruples.txt
